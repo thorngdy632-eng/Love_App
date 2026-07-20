@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "108689523441",
+    "project_id": "love-app-aee08",
+    "storage_bucket": "love-app-aee08.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:108689523441:android:3c047345fec1dc9b7a5f50",
+        "android_client_info": {
+          "package_name": "com.example.love_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC1SHAGdLerVbDoPbFgAUGmB0q1kalwH8w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

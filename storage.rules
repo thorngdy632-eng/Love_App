@@ -1,0 +1,16 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules for "ភពមួយពីរនាក់"
+// Reserved for any future use of direct file uploads (the current app
+// stores chat/gallery/memory images as Base64 inside Firestore per the
+// project spec, but Storage is wired in and secured in case you want to
+// switch large media to Storage later for lower Firestore document sizes).
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null &&
+        request.auth.token.email in ['thorngdy@gmail.com', 'seavenh@gmail.com'];
+    }
+  }
+}

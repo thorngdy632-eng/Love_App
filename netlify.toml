@@ -1,0 +1,59 @@
+[build]
+  command = "flutter build web --release --web-renderer html --base-href /"
+  publish = "build/web"
+
+# SPA routing — all paths serve index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Security headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(self), camera=(self), microphone=()"
+
+# Immutable cache for versioned assets
+[[headers]]
+  for = "assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Cache Flutter engine files aggressively
+[[headers]]
+  for = "flutter.js"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Never cache the service worker (must always check for updates)
+[[headers]]
+  for = "flutter_service_worker.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Never cache the main entry point (always get latest)
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Never cache the main Dart JS payload (versioned hash changes each build)
+[[headers]]
+  for = "main.dart.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Cache icons and static images
+[[headers]]
+  for = "icons/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "favicon.png"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

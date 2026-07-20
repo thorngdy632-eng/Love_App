@@ -1,0 +1,510 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ================================================================
+    // 1. AUTHENTICATION HELPERS
+    // ================================================================
+
+    // Only the two authorized user emails may read/write.
+    // This is verified via Firebase Auth token email (NOT UID).
+    function isAuthorized() {
+      return request.auth != null &&
+        request.auth.token.email in [
+          "thorngdy@gmail.com",
+          "seavenh@gmail.com"
+        ];
+    }
+
+    // Owner check: the requester's email matches the document owner's email.
+    function isOwner(email) {
+      return isAuthorized() && request.auth.token.email == email;
+    }
+
+    // ================================================================
+    // 2. TYPE VALIDATION HELPERS
+    // ================================================================
+
+    function isString(v) { return v is string; }
+    function isBool(v)   { return v is bool; }
+    function isTimestamp(v) { return v is timestamp; }
+    function isLatLng(v)    { return v is latlng; }
+    function isMap(v)    { return v is map; }
+
+    // ================================================================
+    // 3. FIELD VALIDATION HELPERS
+    // ================================================================
+
+    // Non-empty string within max length.
+    function nonEmptyStr(v, max) {
+      return isString(v) && v.size() > 0 && v.size() <= max;
+    }
+
+    // Optional string: if absent or null, skip; otherwise must be valid.
+    function optStr(v, max) {
+      return v == null || (isString(v) && v.size() <= max);
+    }
+
+    // Optional timestamp: if absent or null, skip; otherwise must be timestamp.
+    function optTimestamp(v) {
+      return v == null || isTimestamp(v);
+    }
+
+    // Email format: simple regex check.
+    function validEmail(v) {
+      return isString(v) && v.matches('^[^@]+@[^@]+\\.[^@]+$');
+    }
+
+    // Immutable field: on update, the field must not differ from existing.
+    // When the field is absent from the request, `unchanged` is not checked.
+    function unchanged(field) {
+      return !request.resource.data.keys().hasAny([field])
+        || resource.data[field] == request.resource.data[field];
+    }
+
+    // On update, only the listed fields may have changed values.
+    // Keys that are present in both old and new with the same value
+    // are NOT included in affectedKeys(), so they don't need to be listed.
+    function onlyMutable(allowed) {
+      return request.resource.data
+        .diff(resource.data)
+        .affectedKeys()
+        .hasOnly(allowed);
+    }
+
+    // ================================================================
+    // 4. COLLECTION: users/{userEmail}
+    //    Document ID = user email (e.g. users/thorngdy@gmail.com)
+    //
+    //    SCHEMA (inferred from Flutter models + writes):
+    //      uid:           string (immutable, equals doc ID)
+    //      name:          string (mutable)
+    //      email:         string (immutable, equals doc ID)
+    //      phone:         string (mutable)
+    //      bio:           string, optional, default "" (mutable)
+    //      profileImageUrl: string, optional, default "" (mutable, base64)
+    //      location:      GeoPoint, optional (mutable)
+    //      locationUpdatedAt: timestamp, optional (mutable, server-time)
+    //      isOnline:      bool, optional, default false (mutable)
+    //      lastSeen:      timestamp, optional (mutable, server-time)
+    // ================================================================
+
+    match /users/{userEmail} {
+
+      // READ: any authorized user can read the other's profile.
+      allow read: if isAuthorized();
+
+      // CREATE: only the owner may create their own user document.
+      // This fires exactly once (first sign-in / first `set` with merge).
+      allow create: if isOwner(userEmail)
+
+        // --- Required fields ---
+        && request.resource.data.keys().hasAll([
+          'uid', 'name', 'email', 'phone', 'isOnline', 'lastSeen'
+        ])
+        // --- Reject unknown fields ---
+        && request.resource.data.keys().hasOnly([
+          'uid', 'name', 'email', 'phone', 'isOnline', 'lastSeen'
+        ])
+        // --- Type & value validation ---
+        && request.resource.data.uid == userEmail
+        && request.resource.data.email == userEmail
+        && nonEmptyStr(request.resource.data.name, 100)
+        && validEmail(request.resource.data.email)
+        && nonEmptyStr(request.resource.data.phone, 20)
+        && isBool(request.resource.data.isOnline)
+        && isTimestamp(request.resource.data.lastSeen);
+
+      // UPDATE: only the owner may modify their own document.
+      allow update: if isOwner(userEmail)
+
+        // --- Immutable fields must not change ---
+        && unchanged('uid')
+        && unchanged('email')
+
+        // --- Only mutable fields may be affected ---
+        && onlyMutable([
+          'name', 'phone', 'bio', 'profileImageUrl',
+          'location', 'locationUpdatedAt',
+          'isOnline', 'lastSeen'
+        ])
+
+        // --- Validate mutable fields when present ---
+        && (
+          !request.resource.data.keys().hasAny(['name'])
+          || nonEmptyStr(request.resource.data.name, 100)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['phone'])
+          || isString(request.resource.data.phone)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['bio'])
+          || optStr(request.resource.data.bio, 500)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['profileImageUrl'])
+          || optStr(request.resource.data.profileImageUrl, 500000)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['location'])
+          || request.resource.data.location == null
+          || isLatLng(request.resource.data.location)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['locationUpdatedAt'])
+          || optTimestamp(request.resource.data.locationUpdatedAt)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['isOnline'])
+          || isBool(request.resource.data.isOnline)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['lastSeen'])
+          || optTimestamp(request.resource.data.lastSeen)
+        );
+
+      // DELETE: never — accounts are not removable via the app.
+      allow delete: if false;
+    }
+
+    // ================================================================
+    // 5. COLLECTION: chats/{chatId}/messages/{messageId}
+    //    chatId is always "couple_chat_room" (from app_constants.dart).
+    //
+    //    SCHEMA (inferred from MessageModel + writes):
+    //      senderId:   string (immutable, = email of sender)
+    //      senderName: string (immutable)
+    //      text:       string? (mutually exclusive with imageUrl)
+    //      imageUrl:   string? (mutually exclusive with text)
+    //      type:       string, "text" or "image" (immutable)
+    //      createdAt:  timestamp (immutable, server-time)
+    //      isRead:     bool, default false
+    //      reactions:  map<string,string>?, optional (emoji per userId)
+    //      editedAt:   timestamp?, optional (server-time)
+    //      replyTo:    map?, optional (ReplyInfo sub-document)
+    // ================================================================
+
+    match /chats/{chatId}/messages/{messageId} {
+
+      // READ: any authorized user can read all messages.
+      allow read: if isAuthorized();
+
+      // CREATE: senders may only send messages as themselves.
+      allow create: if isAuthorized()
+        && request.resource.data.senderId == request.auth.token.email
+
+        // --- Required fields ---
+        && request.resource.data.keys().hasAll([
+          'senderId', 'senderName', 'type', 'createdAt'
+        ])
+        // --- Reject unknown fields ---
+        && request.resource.data.keys().hasOnly([
+          'senderId', 'senderName', 'text', 'imageUrl',
+          'imageBase64', 'uploadStatus',
+          'type', 'createdAt', 'isRead',
+          'reactions', 'editedAt', 'replyTo'
+        ])
+        // --- senderId must match the authenticated user ---
+        && request.resource.data.senderId == request.auth.token.email
+        // --- senderName: required, short ---
+        && nonEmptyStr(request.resource.data.senderName, 100)
+        // --- type: must be a known value ---
+        && request.resource.data.type in ['text', 'image']
+        // --- createdAt: must be a server timestamp ---
+        && isTimestamp(request.resource.data.createdAt)
+        // --- text XOR (imageUrl OR imageBase64), matching the type ---
+        && (
+          (
+            request.resource.data.type == 'text'
+            && request.resource.data.keys().hasAny(['text'])
+            && nonEmptyStr(request.resource.data.text, 10000)
+            && !request.resource.data.keys().hasAny(['imageUrl'])
+            && !request.resource.data.keys().hasAny(['imageBase64'])
+          )
+          ||
+          (
+            request.resource.data.type == 'image'
+            && !request.resource.data.keys().hasAny(['text'])
+            && (
+              (request.resource.data.keys().hasAny(['imageUrl']) && nonEmptyStr(request.resource.data.imageUrl, 500000))
+              ||
+              (request.resource.data.keys().hasAny(['imageBase64']) && nonEmptyStr(request.resource.data.imageBase64, 500000))
+            )
+          )
+        )
+        // --- isRead: optional, must be bool ---
+        && (
+          !request.resource.data.keys().hasAny(['isRead'])
+          || isBool(request.resource.data.isRead)
+        )
+        // --- reactions: optional, must be map ---
+        && (
+          !request.resource.data.keys().hasAny(['reactions'])
+          || isMap(request.resource.data.reactions)
+        )
+        // --- editedAt: optional, must be timestamp ---
+        && (
+          !request.resource.data.keys().hasAny(['editedAt'])
+          || isTimestamp(request.resource.data.editedAt)
+        )
+        // --- replyTo: optional, must be map ---
+        && (
+          !request.resource.data.keys().hasAny(['replyTo'])
+          || isMap(request.resource.data.replyTo)
+        )
+        // --- imageBase64: optional, must be string up to 500000 chars ---
+        && (
+          !request.resource.data.keys().hasAny(['imageBase64'])
+          || nonEmptyStr(request.resource.data.imageBase64, 500000)
+        )
+        // --- uploadStatus: optional, must be string, one of known values ---
+        && (
+          !request.resource.data.keys().hasAny(['uploadStatus'])
+          || request.resource.data.uploadStatus in ['sent', 'uploading', 'done', 'failed']
+        );
+
+      // UPDATE: two paths:
+      //   Path A — Sender (owner) can edit text, editedAt, reactions, isRead.
+      //   Path B — Partner can toggle reactions or mark as read.
+      allow update: if isAuthorized()
+
+        // ----- PATH A: Sender editing own message -----
+        && (
+          (
+            // Ownership check
+            resource.data.senderId == request.auth.token.email
+
+            // Immutable: senderId, senderName, type, createdAt, replyTo
+            && unchanged('senderId')
+            && unchanged('senderName')
+            && unchanged('type')
+            && unchanged('createdAt')
+            && unchanged('replyTo')
+
+            // Only mutable: text, imageUrl, imageBase64, uploadStatus, editedAt, reactions, isRead
+            // imageUrl is set and imageBase64 is removed when the background
+            // Storage upload completes, upgrading from base64 to a download URL.
+            && onlyMutable(['text', 'imageUrl', 'imageBase64', 'uploadStatus', 'editedAt', 'reactions', 'isRead'])
+
+            // Validate changed fields
+            && (
+              !request.resource.data.keys().hasAny(['text'])
+              || nonEmptyStr(request.resource.data.text, 10000)
+            )
+            && (
+              !request.resource.data.keys().hasAny(['editedAt'])
+              || optTimestamp(request.resource.data.editedAt)
+            )
+            && (
+              !request.resource.data.keys().hasAny(['reactions'])
+              || isMap(request.resource.data.reactions)
+            )
+            && (
+              !request.resource.data.keys().hasAny(['isRead'])
+              || isBool(request.resource.data.isRead)
+            )
+          )
+
+          // ----- PATH B: Partner updating reactions or isRead -----
+          ||
+          (
+            // Not the sender (partner)
+            resource.data.senderId != request.auth.token.email
+
+            // Only reactions or isRead may change
+            && onlyMutable(['reactions', 'isRead'])
+
+            // Validate changed fields
+            && (
+              !request.resource.data.keys().hasAny(['reactions'])
+              || isMap(request.resource.data.reactions)
+            )
+            && (
+              !request.resource.data.keys().hasAny(['isRead'])
+              || isBool(request.resource.data.isRead)
+            )
+          )
+        );
+
+      // DELETE: only the sender may delete their own message.
+      allow delete: if isAuthorized()
+        && resource.data.senderId == request.auth.token.email;
+    }
+
+    // ================================================================
+    // 6. COLLECTION: notes/{noteId}
+    //
+    //    SCHEMA (inferred from NoteModel + writes):
+    //      title:      string (mutable)
+    //      content:    string (mutable)
+    //      authorId:   string (immutable, = email of author)
+    //      authorName: string (mutable)
+    //      createdAt:  timestamp (immutable, server-time)
+    //      updatedAt:  timestamp (mutable, server-time)
+    // ================================================================
+
+    match /notes/{noteId} {
+
+      // READ: any authorized user can read all notes.
+      allow read: if isAuthorized();
+
+      // CREATE: authorId must match the authenticated user.
+      allow create: if isAuthorized()
+        && request.resource.data.authorId == request.auth.token.email
+
+        // --- Required fields ---
+        && request.resource.data.keys().hasAll([
+          'title', 'content', 'authorId', 'authorName',
+          'createdAt', 'updatedAt'
+        ])
+        // --- Reject unknown fields ---
+        && request.resource.data.keys().hasOnly([
+          'title', 'content', 'authorId', 'authorName',
+          'createdAt', 'updatedAt'
+        ])
+        // --- Ownership ---
+        && request.resource.data.authorId == request.auth.token.email
+        // --- Type & value validation ---
+        && nonEmptyStr(request.resource.data.title, 500)
+        && nonEmptyStr(request.resource.data.content, 10000)
+        && nonEmptyStr(request.resource.data.authorName, 100)
+        && isTimestamp(request.resource.data.createdAt)
+        && isTimestamp(request.resource.data.updatedAt);
+
+      // UPDATE: only the original author may update.
+      allow update: if isAuthorized()
+        && resource.data.authorId == request.auth.token.email
+
+        // --- Immutable ---
+        && unchanged('authorId')
+
+        // --- Only mutable fields ---
+        && onlyMutable([
+          'title', 'content', 'authorName', 'updatedAt'
+        ])
+
+        // --- Validate changed fields ---
+        && (
+          !request.resource.data.keys().hasAny(['title'])
+          || nonEmptyStr(request.resource.data.title, 500)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['content'])
+          || nonEmptyStr(request.resource.data.content, 10000)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['authorName'])
+          || nonEmptyStr(request.resource.data.authorName, 100)
+        )
+        && (
+          !request.resource.data.keys().hasAny(['updatedAt'])
+          || isTimestamp(request.resource.data.updatedAt)
+        );
+
+      // DELETE: only the original author may delete.
+      allow delete: if isAuthorized()
+        && resource.data.authorId == request.auth.token.email;
+    }
+
+    // ================================================================
+    // 7. COLLECTION: memories/{memoryId}
+    //
+    //    SCHEMA (inferred from MemoryModel + writes):
+    //      title:       string (immutable after create)
+    //      description: string (immutable after create)
+    //      imageUrl:    string (immutable after create, base64)
+    //      memoryDate:  timestamp (immutable after create)
+    //      authorId:    string (immutable, = email of author)
+    //      createdAt:   timestamp (immutable, server-time)
+    //
+    //    NOTE: The app never updates memories — create and delete only.
+    // ================================================================
+
+    match /memories/{memoryId} {
+
+      // READ: any authorized user can read all memories.
+      allow read: if isAuthorized();
+
+      // CREATE: authorId must match the authenticated user.
+      allow create: if isAuthorized()
+        && request.resource.data.authorId == request.auth.token.email
+
+        // --- Required fields ---
+        && request.resource.data.keys().hasAll([
+          'title', 'description', 'imageUrl', 'memoryDate',
+          'authorId', 'createdAt'
+        ])
+        // --- Reject unknown fields ---
+        && request.resource.data.keys().hasOnly([
+          'title', 'description', 'imageUrl', 'memoryDate',
+          'authorId', 'createdAt'
+        ])
+        // --- Ownership ---
+        && request.resource.data.authorId == request.auth.token.email
+        // --- Type & value validation ---
+        && nonEmptyStr(request.resource.data.title, 500)
+        && nonEmptyStr(request.resource.data.description, 5000)
+        && nonEmptyStr(request.resource.data.imageUrl, 500000)
+        && isTimestamp(request.resource.data.memoryDate)
+        && isTimestamp(request.resource.data.createdAt);
+
+      // UPDATE: app never updates memories.
+      allow update: if false;
+
+      // DELETE: only the original author may delete.
+      allow delete: if isAuthorized()
+        && resource.data.authorId == request.auth.token.email;
+    }
+
+    // ================================================================
+    // 8. COLLECTION: gallery/{photoId}
+    //
+    //    SCHEMA (inferred from GalleryPhotoModel + writes):
+    //      imageUrl:    string (immutable after create, base64)
+    //      uploaderId:  string (immutable, = email of uploader)
+    //      createdAt:   timestamp (immutable, server-time)
+    //
+    //    NOTE: The app never updates gallery photos — create and delete only.
+    // ================================================================
+
+    match /gallery/{photoId} {
+
+      // READ: any authorized user can read all gallery photos.
+      allow read: if isAuthorized();
+
+      // CREATE: uploaderId must match the authenticated user.
+      allow create: if isAuthorized()
+        && request.resource.data.uploaderId == request.auth.token.email
+
+        // --- Required fields ---
+        && request.resource.data.keys().hasAll([
+          'imageUrl', 'uploaderId', 'createdAt'
+        ])
+        // --- Reject unknown fields ---
+        && request.resource.data.keys().hasOnly([
+          'imageUrl', 'uploaderId', 'createdAt'
+        ])
+        // --- Ownership ---
+        && request.resource.data.uploaderId == request.auth.token.email
+        // --- Type & value validation ---
+        && nonEmptyStr(request.resource.data.imageUrl, 500000)
+        && isTimestamp(request.resource.data.createdAt);
+
+      // UPDATE: app never updates gallery photos.
+      allow update: if false;
+
+      // DELETE: any authorized user may delete (shared couples' gallery).
+      allow delete: if isAuthorized();
+    }
+
+    // ================================================================
+    // 9. DEFAULT DENY — catch-all for any unmatched path
+    // ================================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
