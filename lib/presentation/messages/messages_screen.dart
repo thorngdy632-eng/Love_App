@@ -912,6 +912,16 @@ class _ChatBubble extends StatelessWidget {
     state?._startEdit(msg);
   }
 
+  static String _formatTime(DateTime dt) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final msgDate = DateTime(dt.year, dt.month, dt.day);
+    if (msgDate == today) {
+      return DateFormat('HH:mm').format(dt);
+    }
+    return DateFormat('dd/MM HH:mm').format(dt);
+  }
+
   static Future<void> _confirmDelete(BuildContext context, String messageId) async {
     final state = context.findAncestorStateOfType<_MessagesScreenState>();
     if (state == null) return;
@@ -1109,6 +1119,17 @@ class _ChatBubble extends StatelessWidget {
                         )
                       else
                         _buildImageContent(context),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          _formatTime(message.createdAt),
+                          style: TextStyle(
+                            fontFamily: 'KantumruyPro',
+                            fontSize: 10,
+                            color: isMe ? Colors.white60 : AppColors.textLight.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ),
                       if (message.reactions.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),

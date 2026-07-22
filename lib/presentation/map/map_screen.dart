@@ -314,6 +314,22 @@ class _MapScreenState extends State<MapScreen> {
                                       _distanceKm != null ? '${_distanceKm!.toStringAsFixed(2)} គីឡូម៉ែត្រ' : '---',
                                       style: TextStyle(color: AppColors.textDark, fontFamily: 'KantumruyPro', fontSize: 16),
                                     ),
+                                    if (_myLocation != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4),
+                                        child: Text(
+                                          'ខ្ញុំ: ${_myLocation!.latitude.toStringAsFixed(4)}, ${_myLocation!.longitude.toStringAsFixed(4)}',
+                                          style: TextStyle(color: AppColors.textLight, fontFamily: 'KantumruyPro', fontSize: 11),
+                                        ),
+                                      ),
+                                    if (_partnerLocation != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          'គូស្នេហ៍: ${_partnerLocation!.latitude.toStringAsFixed(4)}, ${_partnerLocation!.longitude.toStringAsFixed(4)}',
+                                          style: TextStyle(color: AppColors.textLight, fontFamily: 'KantumruyPro', fontSize: 11),
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),

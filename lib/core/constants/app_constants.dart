@@ -7,7 +7,7 @@ class AppConstants {
   static const String appName = 'ភពមួយពីរនាក់';
 
   /// Relationship start date — edit to your real anniversary date.
-  static final DateTime relationshipStartDate = DateTime(2026, 3, 20, 0, 0, 0);
+  static final DateTime relationshipStartDate = DateTime(2026, 2, 20, 0, 0, 0);
 
   /// The only two people allowed to use this app.
   /// We use each person's EMAIL as their stable identity key throughout the

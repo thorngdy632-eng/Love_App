@@ -39,15 +39,25 @@ class _AppShellState extends State<AppShell> {
       child: Scaffold(
         key: _scaffoldKey,
         drawer: AppDrawer(onNavigateHome: () => _onTabTapped(0)),
-        body: Navigator(
-          key: _navigatorKey,
-          initialRoute: 'home',
-          onGenerateRoute: (settings) {
-            return MaterialPageRoute(
-              builder: (_) => const MainTabView(),
-              settings: settings,
-            );
+        body: PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) return;
+            final navigator = _navigatorKey.currentState;
+            if (navigator != null && navigator.canPop()) {
+              navigator.pop();
+            }
           },
+          child: Navigator(
+            key: _navigatorKey,
+            initialRoute: 'home',
+            onGenerateRoute: (settings) {
+              return MaterialPageRoute(
+                builder: (_) => const MainTabView(),
+                settings: settings,
+              );
+            },
+          ),
         ),
         bottomNavigationBar: Consumer<NavController>(
           builder: (context, nav, _) => BottomNavigationBar(
